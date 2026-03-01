@@ -1,0 +1,36 @@
+{
+  "name": "AI Health Archive",
+  "short_name": "HealthSafe",
+  "description": "Персональный архив медицинских анализов с AI-консультантом",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0ea5e9",
+  "orientation": "any",
+  "lang": "ru",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/dashboard.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Дашборд здоровья"
+    }
+  ],
+  "categories": ["health", "medical"],
+  "prefer_related_applications": false
+}
