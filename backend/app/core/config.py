@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: str = ""
     VAPID_CLAIMS_EMAIL: str = "admin@healthsafe.ru"
 
+    # Redactor Service (изолированный шлюз ПДн)
+    REDACTOR_URL: str = "http://redactor:8001"          # docker hostname
+    REDACTOR_API_KEY: str = "r3d4ct0r-s3cr3t-k3y-ch4ng3-in-pr0duct10n"
+
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "https://healthsafe.ru"]
 

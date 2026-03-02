@@ -91,9 +91,36 @@ def list_documents(
             "uploaded_at": d.uploaded_at.isoformat(),
             "status": d.masking_status,
             "source": d.source,
+            "pii_found": d.pii_found or 0,
         }
         for d in docs
     ]
+
+
+@router.get("/{doc_id}")
+def get_document(
+    doc_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Возвращает маскированное изображение и текст документа."""
+    doc = db.query(EncryptedDoc).filter(
+        EncryptedDoc.id == doc_id, EncryptedDoc.user_id == current_user.id
+    ).first()
+    if not doc:
+        raise HTTPException(404, "Документ не найден")
+    return {
+        "id": str(doc.id),
+        "filename": doc.original_filename,
+        "lab_name": doc.lab_name,
+        "doc_date": doc.doc_date.isoformat() if doc.doc_date else None,
+        "uploaded_at": doc.uploaded_at.isoformat(),
+        "status": doc.masking_status,
+        "source": doc.source,
+        "pii_found": doc.pii_found or 0,
+        "masked_text": doc.masked_text,
+        "masked_image_b64": doc.masked_image_b64,
+    }
 
 
 @router.get("/{doc_id}/download")

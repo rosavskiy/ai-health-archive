@@ -52,6 +52,8 @@ def process_uploaded_document(self, doc_id: str, file_bytes_hex: str, mime_type:
         )
 
         doc.masked_text = result.get("masked_text", "")
+        doc.masked_image_b64 = result.get("masked_image_b64")
+        doc.pii_found = result.get("pii_found", 0)
         doc.lab_name = result.get("lab_name", "")
         if result.get("doc_date"):
             try:

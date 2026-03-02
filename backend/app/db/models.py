@@ -65,6 +65,10 @@ class EncryptedDoc(Base):
 
     # AI-Shield: маскированный текст (без ПДн)
     masked_text = Column(Text, nullable=True)
+    # Маскированное изображение (чёрные прямоугольники поверх ПДн) — base64
+    masked_image_b64 = Column(Text, nullable=True)
+    # Количество найденных ПДн-спанов
+    pii_found = Column(Integer, default=0)
     masking_status = Column(
         SAEnum("pending", "processing", "done", "error", name="masking_status_enum"),
         default="pending"

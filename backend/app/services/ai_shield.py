@@ -1,98 +1,120 @@
 """
-AI-Shield: OCR → NER-маскирование → Извлечение показателей.
-Весь pipeline работает с анонимизированным текстом перед отправкой в LLM.
+AI-Shield: теперь работает как оркестратор.
+
+Поток:
+  1. Отправить файл в Redactor Service → получить masked_text + masked_image
+  2. Отправить masked_text в OpenAI → извлечь медпоказатели
+  3. Вернуть результат в worker
+
+В OpenAI НИКОГДА не попадают сырые данные — только уже анонимизированный текст.
 """
 import re
 import json
-import base64
 import httpx
-from typing import Optional
-
 from openai import OpenAI
+
 from app.core.config import settings
 
 openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
-# Регулярные выражения для быстрого pre-маскирования
-PII_PATTERNS = [
-    (r"\b\d{3}-\d{3}-\d{3}\s?\d{2}\s?\d{2}\b", "[СНИЛС_MASK]"),        # СНИЛС
-    (r"\b\d{16}\b", "[ПОЛИС_MASK]"),                                       # Полис ОМС
-    (r"\b(\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}\b", "[ТЕЛЕФОН_MASK]"),
-    (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "[EMAIL_MASK]"),
-]
 
-
-async def ocr_document(file_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+async def call_redactor_file(file_bytes: bytes, mime_type: str) -> dict:
     """
-    Вызов Yandex Vision OCR API для извлечения текста из изображения/PDF.
+    Отправляет сырой файл в Redactor Service.
+    Возвращает: {masked_text, masked_image_b64, pii_found}
     """
-    encoded = base64.b64encode(file_bytes).decode("utf-8")
-    payload = {
-        "folderId": settings.YANDEX_FOLDER_ID,
-        "analyze_specs": [
-            {
-                "content": encoded,
-                "features": [{"type": "TEXT_DETECTION", "text_detection_config": {"language_codes": ["ru", "en"]}}],
-            }
-        ],
-    }
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
-            json=payload,
-            headers={
-                "Authorization": f"Api-Key {settings.YANDEX_VISION_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            timeout=30,
+            f"{settings.REDACTOR_URL}/redact/file",
+            files={"file": ("document", file_bytes, mime_type)},
+            headers={"X-Redactor-Key": settings.REDACTOR_API_KEY},
         )
         resp.raise_for_status()
-
-    result = resp.json()
-    texts = []
-    for r in result.get("results", []):
-        for feature in r.get("results", []):
-            if "textDetection" in feature:
-                for page in feature["textDetection"].get("pages", []):
-                    for block in page.get("blocks", []):
-                        for line in block.get("lines", []):
-                            line_text = " ".join(w["text"] for w in line.get("words", []))
-                            texts.append(line_text)
-    return "\n".join(texts)
+    return resp.json()
 
 
-def regex_mask_pii(text: str) -> str:
-    """Быстрое regex-маскирование очевидных PII."""
-    for pattern, replacement in PII_PATTERNS:
-        text = re.sub(pattern, replacement, text)
-    return text
-
-
-async def llm_mask_and_extract(raw_text: str) -> dict:
+async def call_redactor_text(text: str) -> dict:
     """
-    Отправляем PRE-маскированный текст в LLM.
-    LLM: 1) финально маскирует оставшиеся ПДн, 2) извлекает медпоказатели.
-    Личность + мед.данные НИКОГДА не передаются вместе.
+    Отправляет текст в Redactor Service для маскирования ПДн.
+    Используется для текстовых вложений из email.
     """
-    pre_masked = regex_mask_pii(raw_text)
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{settings.REDACTOR_URL}/redact/text",
+            json={"text": text},
+            headers={"X-Redactor-Key": settings.REDACTOR_API_KEY},
+        )
+        resp.raise_for_status()
+    return resp.json()
 
-    system_prompt = """Ты — медицинский AI-ассистент для системы AI Health Archive (РФ).
-Задача:
-1. Найди и замени ВСЕ оставшиеся персональные данные (ФИО, адрес, дата рождения, паспорт) на токены [PII_MASK].
-2. Извлеки все лабораторные показатели в JSON-массив:
-   [{"name": "Глюкоза", "value": 5.1, "unit": "ммоль/л", "ref_min": 3.9, "ref_max": 6.1, "date": "2026-01-15"}]
-3. Верни JSON: {"masked_text": "...", "metrics": [...], "lab_name": "...", "doc_date": "YYYY-MM-DD"}
-Отвечай ТОЛЬКО валидным JSON, без markdown-блоков."""
+
+async def extract_metrics_from_masked_text(masked_text: str) -> dict:
+    """
+    Отправляет УЖЕ АНОНИМИЗИРОВАННЫЙ текст в OpenAI.
+    Задача OpenAI: только структурировать данные, не получать ПДн.
+    """
+    system_prompt = """Ты — медицинский AI-ассистент.
+Получаешь текст лабораторного анализа с уже замаскированными персональными данными (████).
+Задача: извлечь медицинские показатели в JSON.
+
+Верни ТОЛЬКО валидный JSON (без markdown-блоков):
+{
+  "metrics": [
+    {"name": "Глюкоза", "value": 5.1, "unit": "ммоль/л", "ref_min": 3.9, "ref_max": 6.1, "date": "2026-01-15"}
+  ],
+  "lab_name": "Инвитро",
+  "doc_date": "2026-01-15"
+}
+
+Если показатель не имеет референсных значений — ставь null.
+Дату формата YYYY-MM-DD. Если даты нет — null."""
 
     response = openai_client.chat.completions.create(
         model=settings.OPENAI_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Документ (предобработан):\n{pre_masked}"},
+            {"role": "user", "content": masked_text},
         ],
         temperature=0,
         max_tokens=4096,
     )
+
+    content = response.choices[0].message.content.strip()
+    content = re.sub(r"^```json\s*|```$", "", content, flags=re.MULTILINE).strip()
+    return json.loads(content)
+
+
+async def process_document_pipeline(file_bytes: bytes, mime_type: str) -> dict:
+    """
+    Полный pipeline:
+      file → [Redactor: OCR+NER+маскирование] → [OpenAI: извлечение метрик]
+
+    Возвращает:
+      {masked_text, masked_image_b64, metrics, lab_name, doc_date, pii_found}
+    """
+    # Шаг 1: Redactor — все ПДн удалены до того как данные уйдут куда-либо ещё
+    redactor_result = await call_redactor_file(file_bytes, mime_type)
+    masked_text = redactor_result.get("masked_text", "")
+    masked_image_b64 = redactor_result.get("masked_image_b64")
+    pii_found = redactor_result.get("pii_found", 0)
+
+    # Шаг 2: OpenAI получает только анонимный текст
+    metrics_result = {}
+    if masked_text.strip():
+        try:
+            metrics_result = await extract_metrics_from_masked_text(masked_text)
+        except Exception:
+            metrics_result = {"metrics": [], "lab_name": "", "doc_date": None}
+
+    return {
+        "masked_text": masked_text,
+        "masked_image_b64": masked_image_b64,
+        "pii_found": pii_found,
+        "metrics": metrics_result.get("metrics", []),
+        "lab_name": metrics_result.get("lab_name", ""),
+        "doc_date": metrics_result.get("doc_date"),
+    }
+
 
     content = response.choices[0].message.content.strip()
     # Убираем markdown-обёртку если LLM всё же добавил

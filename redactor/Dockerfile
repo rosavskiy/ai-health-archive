@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Системные зависимости для Pillow и natasha
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Предзагрузка natasha-моделей при сборке образа (не при первом запросе)
+RUN python -c "from natasha import NewsEmbedding, NewsNERTagger, NamesExtractor, MorphVocab; \
+    emb = NewsEmbedding(); NewsNERTagger(emb); MorphVocab(); print('Models preloaded')"
+
+EXPOSE 8001
+
+# Без --reload в production
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
