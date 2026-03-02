@@ -1,6 +1,6 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Body
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 import uuid
@@ -15,6 +15,13 @@ from app.core.security import (
 from app.core.config import settings
 
 router = APIRouter()
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _get_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False))) -> str:
+    if not credentials:
+        raise HTTPException(401, "Не авторизован")
+    return credentials.credentials
 
 
 class RegisterRequest(BaseModel):
@@ -105,9 +112,7 @@ def totp_verify_full(
 
 
 @router.post("/totp/setup", response_model=TOTPSetupResponse)
-def totp_setup(db: Session = Depends(get_db), token: str = Depends(
-    lambda req: req.headers.get("Authorization", "").replace("Bearer ", "")
-)):
+def totp_setup(db: Session = Depends(get_db), token: str = Depends(_get_token)):
     payload = decode_token(token)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     secret = generate_totp_secret()
@@ -119,7 +124,7 @@ def totp_setup(db: Session = Depends(get_db), token: str = Depends(
 
 @router.post("/totp/enable")
 def totp_enable(code: str = Body(..., embed=True), db: Session = Depends(get_db),
-                token: str = Depends(lambda req: req.headers.get("Authorization", "").replace("Bearer ", ""))):
+               token: str = Depends(_get_token)):
     payload = decode_token(token)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user.totp_secret or not verify_totp(user.totp_secret, code):

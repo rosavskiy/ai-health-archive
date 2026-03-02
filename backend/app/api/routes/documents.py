@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 import io
 
@@ -13,14 +14,19 @@ from app.services.storage import upload_document, download_document, delete_docu
 from app.tasks.worker import process_uploaded_document
 
 router = APIRouter()
+_bearer = HTTPBearer(auto_error=False)
 
 ALLOWED_MIME = {"application/pdf", "image/jpeg", "image/png", "image/heic"}
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
 
-def get_current_user(db: Session = Depends(get_db),
-                     token: str = Depends(lambda req: req.headers.get("Authorization", "").replace("Bearer ", ""))):
-    payload = decode_token(token)
+def get_current_user(
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+):
+    if not credentials:
+        raise HTTPException(401, "Не авторизован")
+    payload = decode_token(credentials.credentials)
     user = db.query(User).filter(User.id == payload["sub"]).first()
     if not user or not user.is_active:
         raise HTTPException(401, "Не авторизован")

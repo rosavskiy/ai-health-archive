@@ -17,7 +17,7 @@ def _get_s3_client():
         endpoint_url=settings.S3_ENDPOINT_URL,
         aws_access_key_id=settings.S3_ACCESS_KEY,
         aws_secret_access_key=settings.S3_SECRET_KEY,
-        region_name="ru-central1",
+        region_name="us-east-1",  # MinIO и Yandex принимают этот регион
     )
 
 
@@ -54,7 +54,6 @@ def upload_document(user_id: str, doc_id: str, file_bytes: bytes) -> str:
         Bucket=settings.S3_BUCKET,
         Key=s3_key,
         Body=encrypted,
-        ServerSideEncryption="AES256",  # дополнительное SSE на стороне S3
     )
     return s3_key
 

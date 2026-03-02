@@ -11,6 +11,8 @@ services:
       POSTGRES_PASSWORD: healthsafe
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U healthsafe"]
       interval: 10s
@@ -23,6 +25,8 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379"
 
   # ─── FastAPI Backend ──────────────────────────────────────────────────────
   backend:
@@ -77,6 +81,26 @@ services:
     depends_on:
       - backend
 
+  # ─── MinIO (локальный S3 для разработки) ────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: healthsafe
+      MINIO_ROOT_PASSWORD: healthsafe
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:
+  minio_data:
